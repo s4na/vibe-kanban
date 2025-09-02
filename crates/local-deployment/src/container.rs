@@ -221,6 +221,93 @@ impl LocalContainerService {
         }
     }
 
+    async fn spawn_in_container(
+        &self,
+        _task_attempt: &TaskAttempt,
+        executor_action: &ExecutorAction,
+        current_dir: &Path,
+        container_image: &str,
+        volumes: Option<&str>,
+        environment: Option<&str>,
+    ) -> Result<AsyncGroupChild, ContainerError> {
+        use command_group::AsyncCommandGroup;
+        use std::process::Stdio;
+        use tokio::process::Command;
+
+        // Parse volumes JSON if provided
+        let volume_args: Vec<String> = if let Some(vols) = volumes {
+            match serde_json::from_str::<Vec<String>>(vols) {
+                Ok(vol_list) => vol_list
+                    .into_iter()
+                    .flat_map(|v| vec!["-v".to_string(), v])
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!("Failed to parse container volumes: {}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Parse environment JSON if provided
+        let env_args: Vec<String> = if let Some(env) = environment {
+            match serde_json::from_str::<HashMap<String, String>>(env) {
+                Ok(env_map) => env_map
+                    .into_iter()
+                    .flat_map(|(k, v)| vec!["-e".to_string(), format!("{}={}", k, v)])
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!("Failed to parse container environment: {}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Get the command to execute from the executor action
+        let exec_command = executor_action.to_command_string();
+
+        // Build docker run command
+        let mut docker_args = vec![
+            "run".to_string(),
+            "--rm".to_string(), // Remove container after exit
+            "-i".to_string(),   // Interactive mode
+            "-w".to_string(),
+            current_dir.to_string_lossy().to_string(),
+        ];
+
+        // Add volume mounts - always mount the current worktree
+        docker_args.push("-v".to_string());
+        docker_args.push(format!("{}:{}", current_dir.to_string_lossy(), current_dir.to_string_lossy()));
+        docker_args.extend(volume_args);
+
+        // Add environment variables
+        docker_args.extend(env_args);
+
+        // Add the image
+        docker_args.push(container_image.to_string());
+
+        // Add the command to execute
+        docker_args.push("sh".to_string());
+        docker_args.push("-c".to_string());
+        docker_args.push(exec_command);
+
+        let mut cmd = Command::new("docker");
+        cmd.args(&docker_args);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.stdin(Stdio::piped());
+        cmd.kill_on_drop(true);
+
+        let child = cmd
+            .group_spawn()
+            .map_err(|e| ContainerError::Other(anyhow!("Failed to spawn docker container: {}", e)))?;
+
+        Ok(child)
+    }
+
     pub async fn cleanup_expired_attempt(
         db: &DBService,
         attempt_id: Uuid,
@@ -635,7 +722,7 @@ impl LocalContainerService {
     /// Process file changes and generate diff events
     fn process_file_changes(
         git_service: &GitService,
-        project_repo_path: &Path,
+        _project_repo_path: &Path,
         worktree_path: &Path,
         task_branch: &str,
         base_branch: &str,
@@ -847,8 +934,38 @@ impl ContainerService for LocalContainerService {
             )))?;
         let current_dir = PathBuf::from(container_ref);
 
-        // Create the child and stream, add to execution tracker
-        let mut child = executor_action.spawn(&current_dir).await?;
+        // Check execution environment and spawn accordingly
+        let mut child = if task_attempt.execution_environment == "container" {
+            // Get project to fetch container configuration
+            let task = task_attempt
+                .parent_task(&self.db.pool)
+                .await?
+                .ok_or(sqlx::Error::RowNotFound)?;
+            let project = task
+                .parent_project(&self.db.pool)
+                .await?
+                .ok_or(sqlx::Error::RowNotFound)?;
+
+            // Use Docker container execution if configured
+            if let Some(container_image) = &project.container_image {
+                self.spawn_in_container(
+                    task_attempt,
+                    executor_action,
+                    &current_dir,
+                    container_image,
+                    project.container_volumes.as_deref(),
+                    project.container_environment.as_deref(),
+                )
+                .await?
+            } else {
+                // Fallback to host if no container image specified
+                tracing::warn!("Container execution requested but no container image specified, falling back to host");
+                executor_action.spawn(&current_dir).await?
+            }
+        } else {
+            // Default host execution
+            executor_action.spawn(&current_dir).await?
+        };
 
         self.track_child_msgs_in_store(execution_process.id, &mut child)
             .await;

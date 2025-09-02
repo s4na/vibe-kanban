@@ -114,6 +114,7 @@ pub async fn create_task_and_start(
         &CreateTaskAttempt {
             profile: profile_label.clone(),
             base_branch: branch,
+            execution_environment: project.execution_environment.clone(),
         },
         task.id,
     )

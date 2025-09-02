@@ -44,6 +44,18 @@ impl ExecutorAction {
     pub fn next_action(&self) -> Option<&Box<ExecutorAction>> {
         self.next_action.as_ref()
     }
+
+    pub fn to_command_string(&self) -> String {
+        match &self.typ {
+            ExecutorActionType::ScriptRequest(script) => script.script.clone(),
+            ExecutorActionType::CodingAgentInitialRequest(req) => {
+                format!("echo 'Running coding agent with prompt: {}'", req.prompt)
+            }
+            ExecutorActionType::CodingAgentFollowUpRequest(req) => {
+                format!("echo 'Running follow-up with prompt: {}'", req.prompt)
+            }
+        }
+    }
 }
 
 #[async_trait]

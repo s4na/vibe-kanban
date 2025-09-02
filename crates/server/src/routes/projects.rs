@@ -182,11 +182,16 @@ pub async fn update_project(
         dev_script,
         cleanup_script,
         copy_files,
+        execution_environment,
+        container_image,
+        container_volumes,
+        container_environment,
     } = payload;
 
     let name = name.unwrap_or(existing_project.name);
     let git_repo_path =
         git_repo_path.unwrap_or(existing_project.git_repo_path.to_string_lossy().to_string());
+    let execution_environment = execution_environment.unwrap_or(existing_project.execution_environment);
 
     match Project::update(
         &deployment.db().pool,
@@ -197,6 +202,10 @@ pub async fn update_project(
         dev_script,
         cleanup_script,
         copy_files,
+        execution_environment,
+        container_image,
+        container_volumes,
+        container_environment,
     )
     .await
     {

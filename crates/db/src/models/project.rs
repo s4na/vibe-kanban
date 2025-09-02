@@ -30,6 +30,10 @@ pub struct Project {
     pub dev_script: Option<String>,
     pub cleanup_script: Option<String>,
     pub copy_files: Option<String>,
+    pub execution_environment: String, // "host" or "container"
+    pub container_image: Option<String>,
+    pub container_volumes: Option<String>, // JSON array of volume mappings
+    pub container_environment: Option<String>, // JSON object of environment variables
 
     #[ts(type = "Date")]
     pub created_at: DateTime<Utc>,
@@ -46,6 +50,10 @@ pub struct CreateProject {
     pub dev_script: Option<String>,
     pub cleanup_script: Option<String>,
     pub copy_files: Option<String>,
+    pub execution_environment: Option<String>,
+    pub container_image: Option<String>,
+    pub container_volumes: Option<String>,
+    pub container_environment: Option<String>,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -56,6 +64,10 @@ pub struct UpdateProject {
     pub dev_script: Option<String>,
     pub cleanup_script: Option<String>,
     pub copy_files: Option<String>,
+    pub execution_environment: Option<String>,
+    pub container_image: Option<String>,
+    pub container_volumes: Option<String>,
+    pub container_environment: Option<String>,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -68,6 +80,10 @@ pub struct ProjectWithBranch {
     pub cleanup_script: Option<String>,
     pub copy_files: Option<String>,
     pub current_branch: Option<String>,
+    pub execution_environment: String,
+    pub container_image: Option<String>,
+    pub container_volumes: Option<String>,
+    pub container_environment: Option<String>,
 
     #[ts(type = "Date")]
     pub created_at: DateTime<Utc>,
@@ -86,6 +102,10 @@ impl ProjectWithBranch {
             cleanup_script: project.cleanup_script,
             copy_files: project.copy_files,
             current_branch,
+            execution_environment: project.execution_environment,
+            container_image: project.container_image,
+            container_volumes: project.container_volumes,
+            container_environment: project.container_environment,
             created_at: project.created_at,
             updated_at: project.updated_at,
         }
@@ -110,7 +130,7 @@ impl Project {
     pub async fn find_all(pool: &SqlitePool) -> Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as!(
             Project,
-            r#"SELECT id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>" FROM projects ORDER BY created_at DESC"#
+            r#"SELECT id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, execution_environment, container_image, container_volumes, container_environment, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>" FROM projects ORDER BY created_at DESC"#
         )
         .fetch_all(pool)
         .await
@@ -119,7 +139,7 @@ impl Project {
     pub async fn find_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as!(
             Project,
-            r#"SELECT id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>" FROM projects WHERE id = $1"#,
+            r#"SELECT id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, execution_environment, container_image, container_volumes, container_environment, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>" FROM projects WHERE id = $1"#,
             id
         )
         .fetch_optional(pool)
@@ -132,7 +152,7 @@ impl Project {
     ) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as!(
             Project,
-            r#"SELECT id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>" FROM projects WHERE git_repo_path = $1"#,
+            r#"SELECT id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, execution_environment, container_image, container_volumes, container_environment, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>" FROM projects WHERE git_repo_path = $1"#,
             git_repo_path
         )
         .fetch_optional(pool)
@@ -146,7 +166,7 @@ impl Project {
     ) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as!(
             Project,
-            r#"SELECT id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>" FROM projects WHERE git_repo_path = $1 AND id != $2"#,
+            r#"SELECT id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, execution_environment, container_image, container_volumes, container_environment, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>" FROM projects WHERE git_repo_path = $1 AND id != $2"#,
             git_repo_path,
             exclude_id
         )
@@ -159,16 +179,21 @@ impl Project {
         data: &CreateProject,
         project_id: Uuid,
     ) -> Result<Self, sqlx::Error> {
+        let execution_env = data.execution_environment.as_deref().unwrap_or("host");
         sqlx::query_as!(
             Project,
-            r#"INSERT INTO projects (id, name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
+            r#"INSERT INTO projects (id, name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, execution_environment, container_image, container_volumes, container_environment) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, execution_environment, container_image, container_volumes, container_environment, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
             project_id,
             data.name,
             data.git_repo_path,
             data.setup_script,
             data.dev_script,
             data.cleanup_script,
-            data.copy_files
+            data.copy_files,
+            execution_env,
+            data.container_image,
+            data.container_volumes,
+            data.container_environment
         )
         .fetch_one(pool)
         .await
@@ -183,17 +208,25 @@ impl Project {
         dev_script: Option<String>,
         cleanup_script: Option<String>,
         copy_files: Option<String>,
+        execution_environment: String,
+        container_image: Option<String>,
+        container_volumes: Option<String>,
+        container_environment: Option<String>,
     ) -> Result<Self, sqlx::Error> {
         sqlx::query_as!(
             Project,
-            r#"UPDATE projects SET name = $2, git_repo_path = $3, setup_script = $4, dev_script = $5, cleanup_script = $6, copy_files = $7 WHERE id = $1 RETURNING id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
+            r#"UPDATE projects SET name = $2, git_repo_path = $3, setup_script = $4, dev_script = $5, cleanup_script = $6, copy_files = $7, execution_environment = $8, container_image = $9, container_volumes = $10, container_environment = $11 WHERE id = $1 RETURNING id as "id!: Uuid", name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, execution_environment, container_image, container_volumes, container_environment, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
             id,
             name,
             git_repo_path,
             setup_script,
             dev_script,
             cleanup_script,
-            copy_files
+            copy_files,
+            execution_environment,
+            container_image,
+            container_volumes,
+            container_environment
         )
         .fetch_one(pool)
         .await

@@ -114,11 +114,21 @@ pub async fn create_task_attempt(
                 executor_profile_id.executor
             )))
         })?;
+    
+    // Get the task to find its project for execution environment
+    let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
+        .await?
+        .ok_or(ApiError::Database(SqlxError::RowNotFound))?;
+    let project = Project::find_by_id(&deployment.db().pool, task.project_id)
+        .await?
+        .ok_or(ApiError::Database(SqlxError::RowNotFound))?;
+    
     let task_attempt = TaskAttempt::create(
         &deployment.db().pool,
         &CreateTaskAttempt {
             profile: executor_profile_id.executor.clone(),
             base_branch: payload.base_branch.clone(),
+            execution_environment: project.execution_environment.clone(),
         },
         payload.task_id,
     )
